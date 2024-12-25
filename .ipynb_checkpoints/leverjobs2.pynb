@@ -1,0 +1,98 @@
+import ssl
+from urllib.request import Request, urlopen
+from urllib.error import HTTPError
+from html.parser import HTMLParser
+from bs4 import BeautifulSoup
+from io import StringIO
+import requests
+import time
+import re
+import pandas as pd
+import json
+import random
+import os
+
+# Disable SSL verification globally for urllib
+ssl._create_default_https_context = ssl._create_unverified_context
+
+class MLStripper(HTMLParser):
+    def __init__(self):
+        super().__init__()
+        self.reset()
+        self.strict = False
+        self.convert_charrefs = True
+        self.text = StringIO()
+
+    def handle_data(self, d):
+        self.text.write(d)
+
+    def get_data(self):
+        return self.text.getvalue()
+
+class LeverWebScraper:
+    def __init__(self):
+        self.urls = None
+
+    def extract_urls(self, text):
+        regex_pattern = r"(https?://[jobs.lever.co][^\s]+)"
+        urls = re.findall(regex_pattern, text)
+        return urls
+
+    def remove_tags(self, html):
+        # parse html content
+        soup = BeautifulSoup(html, "html.parser")
+        for data in soup(['style', 'script']):
+            data.decompose()
+        return ' '.join(soup.stripped_strings)
+
+    def get_lever_sites(self):
+        lever_gsheet = "https://docs.google.com/spreadsheets/d/18u2sKRKjKz9gwRyob0p9KmcyVC6NX8JaJhjOqsRmbKY/edit?usp=sharing"
+        csv_url = lever_gsheet
+        # Disable SSL verification for requests
+        res = requests.get(url=csv_url, verify=False)
+        content = res.content
+        content = self.remove_tags(content)
+        urls = self.extract_urls(content)
+        return urls
+
+    def strip_tags(self, html):
+        s = MLStripper()
+        s.feed(html)
+        return s.get_data()
+
+    def clean_job_posting(self, posting):
+        text = self.strip_tags(posting)
+        cleaned_text = re.sub(r'([a-z])([A-Z])', r'\1 \2', text)
+        cleaned_text = re.sub(r'([a-zA-Z])([^a-zA-Z])', r'\1 \2', cleaned_text)
+        cleaned_text = re.sub(r'([^a-zA-Z])([a-zA-Z])', r'\1 \2', cleaned_text)
+        cleaned_text = re.sub(r'\s+', ' ', cleaned_text)
+        cleaned_text = cleaned_text.replace("( ", "").replace(" )", "")
+        if cleaned_text.startswith('Apply'):
+            cleaned_text = cleaned_text.replace('Apply', '')
+        if cleaned_text.endswith('Remote'):
+            cleaned_text = '[REMOTE] - ' + cleaned_text.replace('Remote', '')
+        elif cleaned_text.endswith('On-site'):
+            cleaned_text = '[ON-SITE] - ' + cleaned_text.replace('On-site', '')
+        elif cleaned_text.endswith('Hybrid'):
+            cleaned_text = '[HYBRID] - ' + cleaned_text.replace('Hybrid', '')
+        if "Full - Time" in cleaned_text:
+            cleaned_text = '[Full-Time]' + cleaned_text.replace("Full - Time", "")
+        elif "Part - time" in cleaned_text:
+            cleaned_text = '[Part-Time]' + cleaned_text.replace("Part - time", "")
+        cleaned_text = cleaned_text.replace("  ", " ")
+        return cleaned_text
+
+    def get_postings(self):
+        all_postings = list()
+        map0 = {'urls': [], 'descriptions': [], 'points': []}
+        links = self.get_lever_sites()
+        links = [l + "/" if not l.endswith("/") else l for l in links]
+        links = [l for l in links if ".eu." not in l]
+        links = list(set(links))
+        random.shuffle(links)
+        current_link_n = 1
+        n_links = len(links)
+
+        for current_url in links:
+            current_link_n += 1
+            req = Request(current_url, headers={'User-Agent': 'Mozilla/5
